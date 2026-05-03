@@ -1,3 +1,4 @@
+// Shader.h
 #pragma once
 #include <string>
 #include <glm/glm.hpp>
@@ -13,4 +14,5 @@ public:
     void setMat4(const std::string& name, const glm::mat4& mat) const;
     void setVec3(const std::string& name, const glm::vec3& v) const;
     void setFloat(const std::string& name, float f) const;
+    void setInt(const std::string& name, int i) const;
 };

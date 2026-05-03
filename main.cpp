@@ -2,6 +2,10 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
+#define STBI_ENABLE_OPENEXR
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -16,7 +20,66 @@
 #include <iostream>
 #include <vector>
 
-Camera gCamera; // default-constructed camera
+// ------------------------------------------------------------
+// Texture loader (supports JPG, PNG, EXR)
+// ------------------------------------------------------------
+unsigned int loadTexture(const char* path)
+{
+    int width, height, channels;
+    stbi_set_flip_vertically_on_load(false);
+
+    float* hdrData = nullptr;
+    unsigned char* data = nullptr;
+
+    bool isEXR = false;
+    std::string p(path);
+    if (p.size() > 4 && p.substr(p.size() - 4) == ".exr")
+        isEXR = true;
+
+    if (isEXR)
+        hdrData = stbi_loadf(path, &width, &height, &channels, 0);
+    else
+        data = stbi_load(path, &width, &height, &channels, 0);
+
+    if ((!isEXR && !data) || (isEXR && !hdrData)) {
+        std::cerr << "Failed to load texture: " << path << "\n";
+        return 0;
+    }
+
+    GLenum format = GL_RGB;
+    if (channels == 1) format = GL_RED;
+    if (channels == 3) format = GL_RGB;
+    if (channels == 4) format = GL_RGBA;
+
+    unsigned int tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+
+    if (isEXR) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F,
+                     width, height, 0, format, GL_FLOAT, hdrData);
+    } else {
+        glTexImage2D(GL_TEXTURE_2D, 0, format,
+                     width, height, 0, format, GL_UNSIGNED_BYTE, data);
+    }
+
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    if (isEXR) stbi_image_free(hdrData);
+    else stbi_image_free(data);
+
+    return tex;
+}
+
+// ------------------------------------------------------------
+// Globals
+// ------------------------------------------------------------
+Camera gCamera;
 float gDeltaTime = 0.0f;
 float gLastFrame = 0.0f;
 
@@ -28,6 +91,9 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     gCamera.processMouse((float)xpos, (float)ypos);
 }
 
+// ------------------------------------------------------------
+// Main
+// ------------------------------------------------------------
 int main() {
     if (!glfwInit()) {
         std::cerr << "Failed to init GLFW\n";
@@ -55,35 +121,53 @@ int main() {
         return -1;
     }
 
-    // Set initial camera position after GL context is ready
+    // Initial camera position
     gCamera.position = glm::vec3(0.0f, 2.0f, 8.0f);
 
     glEnable(GL_DEPTH_TEST);
 
+    // --------------------------------------------------------
     // Shaders
+    // --------------------------------------------------------
     Shader branchShader("shaders/branch.vert", "shaders/branch.frag");
     Shader leafShader("shaders/leaf.vert", "shaders/leaf.frag");
+    Shader groundShader("shaders/ground.vert", "shaders/ground.frag");
 
+
+    // --------------------------------------------------------
+    // Load bark textures
+    // --------------------------------------------------------
+    unsigned int barkDiffuseID = loadTexture("textures/bark_willow_02_diff_4k.jpg");
+    unsigned int barkNormalID  = loadTexture("textures/bark_willow_02_nor_gl_4k.exr");
+
+    branchShader.use();
+    branchShader.setInt("barkTex", 0);
+    branchShader.setInt("barkNormal", 1);
+
+    // --------------------------------------------------------
     // Shared meshes
-    Mesh branchMesh = createCylinderMesh(24);      // trunk/branch primitive (base at y=0, height 1)
-    Mesh leafMesh   = createLeafClusterMesh();     // leaf cluster primitive
-    Mesh groundMesh = createGroundPlaneMesh();     // simple ground plane
+    // --------------------------------------------------------
+    Mesh branchMesh = createCylinderMesh(24);
+    Mesh leafMesh   = createLeafClusterMesh();
+    Mesh groundMesh = createGroundPlaneMesh();
 
+    // --------------------------------------------------------
     // Physics system
+    // --------------------------------------------------------
     Physics physics;
 
-    // Create exactly two trees with explicit positions
+    // --------------------------------------------------------
+    // Create two trees
+    // --------------------------------------------------------
     std::vector<Tree> forest;
     forest.reserve(2);
 
     {
         Tree t;
-        t.generate("F", 5, 1.2f, 0.12f);   // taller tree
-        glm::mat4 world = glm::translate(glm::mat4(1.0f), glm::vec3(-3.0f, 0.0f, 0.0f));
-        t.worldMatrix = world;
+        t.generate("F", 5, 1.2f, 0.12f);
+        t.worldMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(-3.0f, 0.0f, 0.0f));
         t.worldPosition = glm::vec3(-3.0f, 0.0f, 0.0f);
 
-        // Slightly bias trunk stiffness/mass for visual stability
         for (Branch& b : t.branches) {
             b.mass *= 1.0f + 0.2f * (1.0f - glm::clamp((float)b.depth / 6.0f, 0.0f, 1.0f));
             if (b.depth <= 1) b.stiffness *= 2.0f;
@@ -94,9 +178,8 @@ int main() {
 
     {
         Tree t;
-        t.generate("F", 4, 0.9f, 0.10f);   // shorter tree
-        glm::mat4 world = glm::translate(glm::mat4(1.0f), glm::vec3(3.0f, 0.0f, 0.0f));
-        t.worldMatrix = world;
+        t.generate("F", 4, 0.9f, 0.10f);
+        t.worldMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(3.0f, 0.0f, 0.0f));
         t.worldPosition = glm::vec3(3.0f, 0.0f, 0.0f);
 
         for (Branch& b : t.branches) {
@@ -107,12 +190,9 @@ int main() {
         forest.push_back(std::move(t));
     }
 
-    // Print positions for sanity
-    for (size_t i = 0; i < forest.size(); ++i) {
-        std::cout << "Tree[" << i << "] at " << forest[i].worldPosition.x << ", " << forest[i].worldPosition.z << "\n";
-    }
-
+    // --------------------------------------------------------
     // Main loop
+    // --------------------------------------------------------
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = (float)glfwGetTime();
         gDeltaTime = currentFrame - gLastFrame;
@@ -127,12 +207,11 @@ int main() {
         if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) gCamera.processKeyboard('A', gDeltaTime);
         if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) gCamera.processKeyboard('D', gDeltaTime);
 
-        // Update collider from input (shared physics controller)
         physics.updateColliderFromInput(gDeltaTime);
 
         float time = (float)glfwGetTime();
 
-        // Update physics per tree
+        // Physics update
         for (Tree& t : forest) {
             physics.updateBranches(t, gDeltaTime, time);
             physics.applyCollisions(t);
@@ -145,23 +224,27 @@ int main() {
         glm::mat4 view = gCamera.getViewMatrix();
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1280.f / 720.f, 0.1f, 200.0f);
 
-        // Ground pass
-        branchShader.use();
-        branchShader.setMat4("view", view);
-        branchShader.setMat4("projection", projection);
-        branchShader.setVec3("lightDir", glm::normalize(glm::vec3(-0.3f, -1.0f, -0.2f)));
-        branchShader.setVec3("lightColor", glm::vec3(1.0f));
-        branchShader.setVec3("viewPos", gCamera.position);
+        // Bind bark textures
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, barkDiffuseID);
 
-        // Ground color
-        branchShader.setVec3("baseColor", glm::vec3(0.28f, 0.45f, 0.25f));
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, barkNormalID);
+
+        // Ground (uses its own shader, no bark texture)
+        groundShader.use();
+        groundShader.setMat4("view", view);
+        groundShader.setMat4("projection", projection);
 
         glm::mat4 groundModel(1.0f);
-        branchShader.setMat4("model", groundModel);
+        groundShader.setMat4("model", groundModel);
+        groundShader.setVec3("groundColor", glm::vec3(0.20f, 0.40f, 0.22f));
+
         glBindVertexArray(groundMesh.VAO);
         glDrawArrays(groundMesh.mode, 0, groundMesh.vertexCount);
 
-        // Draw each tree
+
+        // Trees
         for (const Tree& t : forest) {
             t.draw(branchShader, leafShader, view, projection, physics, branchMesh, leafMesh);
         }
