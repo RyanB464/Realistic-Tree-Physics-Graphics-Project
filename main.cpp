@@ -2,7 +2,6 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
-#define STBI_ENABLE_OPENEXR
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -21,27 +20,15 @@
 #include <vector>
 
 // ------------------------------------------------------------
-// Texture loader (supports JPG, PNG, EXR)
+// Texture loader (PNG/JPG only)
 // ------------------------------------------------------------
 unsigned int loadTexture(const char* path)
 {
     int width, height, channels;
     stbi_set_flip_vertically_on_load(false);
 
-    float* hdrData = nullptr;
-    unsigned char* data = nullptr;
-
-    bool isEXR = false;
-    std::string p(path);
-    if (p.size() > 4 && p.substr(p.size() - 4) == ".exr")
-        isEXR = true;
-
-    if (isEXR)
-        hdrData = stbi_loadf(path, &width, &height, &channels, 0);
-    else
-        data = stbi_load(path, &width, &height, &channels, 0);
-
-    if ((!isEXR && !data) || (isEXR && !hdrData)) {
+    unsigned char* data = stbi_load(path, &width, &height, &channels, 0);
+    if (!data) {
         std::cerr << "Failed to load texture: " << path << "\n";
         return 0;
     }
@@ -55,14 +42,9 @@ unsigned int loadTexture(const char* path)
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
 
-    if (isEXR) {
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F,
-                     width, height, 0, format, GL_FLOAT, hdrData);
-    } else {
-        glTexImage2D(GL_TEXTURE_2D, 0, format,
-                     width, height, 0, format, GL_UNSIGNED_BYTE, data);
-    }
-
+    glTexImage2D(GL_TEXTURE_2D, 0, format,
+                 width, height, 0, format,
+                 GL_UNSIGNED_BYTE, data);
     glGenerateMipmap(GL_TEXTURE_2D);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
@@ -70,9 +52,7 @@ unsigned int loadTexture(const char* path)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-    if (isEXR) stbi_image_free(hdrData);
-    else stbi_image_free(data);
-
+    stbi_image_free(data);
     return tex;
 }
 
@@ -121,9 +101,7 @@ int main() {
         return -1;
     }
 
-    // Initial camera position
     gCamera.position = glm::vec3(0.0f, 2.0f, 8.0f);
-
     glEnable(GL_DEPTH_TEST);
 
     // --------------------------------------------------------
@@ -133,16 +111,19 @@ int main() {
     Shader leafShader("shaders/leaf.vert", "shaders/leaf.frag");
     Shader groundShader("shaders/ground.vert", "shaders/ground.frag");
 
-
     // --------------------------------------------------------
-    // Load bark textures
+    // Textures
     // --------------------------------------------------------
     unsigned int barkDiffuseID = loadTexture("textures/bark_willow_02_diff_4k.jpg");
-    unsigned int barkNormalID  = loadTexture("textures/bark_willow_02_nor_gl_4k.exr");
+    unsigned int barkNormalID  = loadTexture("textures/bark_willow_02_nor_gl_4k.png");
+    unsigned int leafTexID     = loadTexture("textures/leaf_atlas.png");
 
     branchShader.use();
     branchShader.setInt("barkTex", 0);
     branchShader.setInt("barkNormal", 1);
+
+    leafShader.use();
+    leafShader.setInt("leafTex", 2);
 
     // --------------------------------------------------------
     // Shared meshes
@@ -152,12 +133,12 @@ int main() {
     Mesh groundMesh = createGroundPlaneMesh();
 
     // --------------------------------------------------------
-    // Physics system
+    // Physics
     // --------------------------------------------------------
     Physics physics;
 
     // --------------------------------------------------------
-    // Create two trees
+    // Create trees
     // --------------------------------------------------------
     std::vector<Tree> forest;
     forest.reserve(2);
@@ -165,7 +146,7 @@ int main() {
     {
         Tree t;
         t.generate("F", 5, 1.2f, 0.12f);
-        t.worldMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(-3.0f, 0.0f, 0.0f));
+        t.worldMatrix   = glm::translate(glm::mat4(1.0f), glm::vec3(-3.0f, 0.0f, 0.0f));
         t.worldPosition = glm::vec3(-3.0f, 0.0f, 0.0f);
 
         for (Branch& b : t.branches) {
@@ -179,7 +160,7 @@ int main() {
     {
         Tree t;
         t.generate("F", 4, 0.9f, 0.10f);
-        t.worldMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(3.0f, 0.0f, 0.0f));
+        t.worldMatrix   = glm::translate(glm::mat4(1.0f), glm::vec3(3.0f, 0.0f, 0.0f));
         t.worldPosition = glm::vec3(3.0f, 0.0f, 0.0f);
 
         for (Branch& b : t.branches) {
@@ -198,7 +179,6 @@ int main() {
         gDeltaTime = currentFrame - gLastFrame;
         gLastFrame = currentFrame;
 
-        // Input
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, true);
 
@@ -211,27 +191,18 @@ int main() {
 
         float time = (float)glfwGetTime();
 
-        // Physics update
         for (Tree& t : forest) {
             physics.updateBranches(t, gDeltaTime, time);
             physics.applyCollisions(t);
         }
 
-        // Render
         glClearColor(0.18f, 0.24f, 0.28f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        glm::mat4 view = gCamera.getViewMatrix();
+        glm::mat4 view       = gCamera.getViewMatrix();
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1280.f / 720.f, 0.1f, 200.0f);
 
-        // Bind bark textures
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, barkDiffuseID);
-
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, barkNormalID);
-
-        // Ground (uses its own shader, no bark texture)
+        // Ground
         groundShader.use();
         groundShader.setMat4("view", view);
         groundShader.setMat4("projection", projection);
@@ -243,6 +214,16 @@ int main() {
         glBindVertexArray(groundMesh.VAO);
         glDrawArrays(groundMesh.mode, 0, groundMesh.vertexCount);
 
+        // Bark textures
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, barkDiffuseID);
+
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, barkNormalID);
+
+        // Leaf texture
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, leafTexID);
 
         // Trees
         for (const Tree& t : forest) {

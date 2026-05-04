@@ -1,34 +1,40 @@
-#include "Mesh.h"
 #include <vector>
-#include <glm/glm.hpp>
 #include <cmath>
+#include <glad/glad.h>
+#include "Mesh.h"
 
-Mesh createCylinderMesh(int segments) {
+// ------------------------------------------------------------
+// Cylinder mesh for branches
+// position (loc 0), normal (loc 1)
+// ------------------------------------------------------------
+Mesh createCylinderMesh(int segments)
+{
     std::vector<float> verts;
-    float radius = 1.0f;
-    float height = 1.0f;
+    verts.reserve(segments * 6 * 6);
+
+    const float radius = 0.5f;
+    const float height = 1.0f;
+    const float twoPi  = 6.28318530718f;
 
     for (int i = 0; i < segments; i++) {
-        float t1 = (float)i / segments * 2.0f * 3.14159f;
-        float t2 = (float)(i + 1) / segments * 2.0f * 3.14159f;
+        float a0 = (float)i / segments * twoPi;
+        float a1 = (float)(i + 1) / segments * twoPi;
 
-        float x1 = radius * cos(t1);
-        float z1 = radius * sin(t1);
-        float x2 = radius * cos(t2);
-        float z2 = radius * sin(t2);
+        float x0 = std::cos(a0), z0 = std::sin(a0);
+        float x1 = std::cos(a1), z1 = std::sin(a1);
 
-        glm::vec3 n1 = glm::normalize(glm::vec3(x1, 0.0f, z1));
-        glm::vec3 n2 = glm::normalize(glm::vec3(x2, 0.0f, z2));
+        float quad[] = {
+            // pos                      // normal
+            radius*x0, 0.0f,    radius*z0,   x0, 0.0f, z0,
+            radius*x1, 0.0f,    radius*z1,   x1, 0.0f, z1,
+            radius*x0, height,  radius*z0,   x0, 0.0f, z0,
 
-        // tri 1
-        verts.insert(verts.end(), { x1, 0.0f, z1, n1.x, n1.y, n1.z });
-        verts.insert(verts.end(), { x2, 0.0f, z2, n2.x, n2.y, n2.z });
-        verts.insert(verts.end(), { x1, height, z1, n1.x, n1.y, n1.z });
+            radius*x1, 0.0f,    radius*z1,   x1, 0.0f, z1,
+            radius*x1, height,  radius*z1,   x1, 0.0f, z1,
+            radius*x0, height,  radius*z0,   x0, 0.0f, z0
+        };
 
-        // tri 2
-        verts.insert(verts.end(), { x2, 0.0f, z2, n2.x, n2.y, n2.z });
-        verts.insert(verts.end(), { x2, height, z2, n2.x, n2.y, n2.z });
-        verts.insert(verts.end(), { x1, height, z1, n1.x, n1.y, n1.z });
+        verts.insert(verts.end(), quad, quad + 36);
     }
 
     Mesh m;
@@ -39,37 +45,49 @@ Mesh createCylinderMesh(int segments) {
     glBindBuffer(GL_ARRAY_BUFFER, m.VBO);
     glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_STATIC_DRAW);
 
+    // position (0)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
+
+    // normal (1)
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
-    m.vertexCount = static_cast<unsigned int>(verts.size() / 6);
+    m.vertexCount = verts.size() / 6;
     m.mode = GL_TRIANGLES;
     return m;
 }
 
-Mesh createLeafClusterMesh() {
-    float leafCluster[] = {
-    // Quad 1 (wide oval)
-    -0.6f, 0.0f, 0.0f,
-     0.6f, 0.0f, 0.0f,
-    -0.3f, 1.0f, 0.0f,
-     0.3f, 1.0f, 0.0f,
+// ------------------------------------------------------------
+// Leaf cluster mesh
+// position (loc 0), UV (loc 1)
+// ------------------------------------------------------------
+Mesh createLeafClusterMesh()
+{
+    const float u0 = 0.0f;
+    const float u1 = 0.25f;
+    const float v0 = 0.0f;
+    const float v1 = 0.25f;
 
-    // Quad 2 (rotated)
-    -0.5f, 0.0f, 0.0f,
-     0.5f, 0.0f, 0.0f,
-    -0.25f, 1.0f, 0.0f,
-     0.25f, 1.0f, 0.0f,
+    float verts[] = {
+        // Quad 1
+        -0.6f, 0.0f, 0.0f,   u0, v0,
+         0.6f, 0.0f, 0.0f,   u1, v0,
+        -0.3f, 1.0f, 0.0f,   u0, v1,
+         0.3f, 1.0f, 0.0f,   u1, v1,
 
-    // Quad 3 (narrow)
-    -0.3f, 0.0f, 0.0f,
-     0.3f, 0.0f, 0.0f,
-    -0.15f, 1.0f, 0.0f,
-     0.15f, 1.0f, 0.0f
+        // Quad 2
+        -0.5f, 0.0f, 0.0f,   u0, v0,
+         0.5f, 0.0f, 0.0f,   u1, v0,
+        -0.25f,1.0f, 0.0f,   u0, v1,
+         0.25f, 1.0f, 0.0f,  u1, v1,
+
+        // Quad 3
+        -0.3f, 0.0f, 0.0f,   u0, v0,
+         0.3f, 0.0f, 0.0f,   u1, v0,
+        -0.15f,1.0f, 0.0f,   u0, v1,
+         0.15f, 1.0f, 0.0f,  u1, v1
     };
-
 
     Mesh m;
     glGenVertexArrays(1, &m.VAO);
@@ -77,18 +95,27 @@ Mesh createLeafClusterMesh() {
 
     glBindVertexArray(m.VAO);
     glBindBuffer(GL_ARRAY_BUFFER, m.VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(leafCluster), leafCluster, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    // position (0)
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
-    m.vertexCount = 12; // 3 quads * 4 verts
-    m.mode = GL_TRIANGLE_STRIP; // we’ll draw each quad separately
+    // UV (1)
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    m.vertexCount = 12;
+    m.mode = GL_TRIANGLE_STRIP;
     return m;
 }
 
-Mesh createGroundPlaneMesh() {
-    float groundVerts[] = {
+// ------------------------------------------------------------
+// Ground plane mesh
+// ------------------------------------------------------------
+Mesh createGroundPlaneMesh()
+{
+    float verts[] = {
         -50.0f, 0.0f, -50.0f,
          50.0f, 0.0f, -50.0f,
         -50.0f, 0.0f,  50.0f,
@@ -101,7 +128,7 @@ Mesh createGroundPlaneMesh() {
 
     glBindVertexArray(m.VAO);
     glBindBuffer(GL_ARRAY_BUFFER, m.VBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(groundVerts), groundVerts, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
 
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);

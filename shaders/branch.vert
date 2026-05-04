@@ -6,22 +6,24 @@ layout (location = 1) in vec3 aNormal;
 // Instance matrix (4 vec4s)
 layout (location = 2) in mat4 instanceModel;
 
-uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
-uniform int  useInstancing;
 
 out vec3 FragPos;
 out vec3 Normal;
+out vec3 LocalPos;
 
 void main()
 {
-    mat4 M = (useInstancing == 1) ? instanceModel : model;
+    // LocalPos used for bark UVs
+    LocalPos = aPos;
 
-    vec4 worldPos = M * vec4(aPos, 1.0);
-    FragPos = vec3(worldPos);
+    // World position
+    vec4 worldPos = instanceModel * vec4(aPos, 1.0);
+    FragPos = worldPos.xyz;
 
-    Normal = normalize(mat3(transpose(inverse(M))) * aNormal);
+    // Normal transform
+    Normal = normalize(mat3(instanceModel) * aNormal);
 
     gl_Position = projection * view * worldPos;
 }
